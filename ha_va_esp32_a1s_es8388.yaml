@@ -1,0 +1,310 @@
+esphome:
+  name: <ADD YOURS>
+  friendly_name: <ADD YOURS>
+
+esp32:
+  board: esp-wrover-kit
+  framework:
+    type: esp-idf
+    
+
+# Enable logging
+logger:
+  level: DEBUG
+  logs:
+    voice_assistant: DEBUG
+    i2s_audio: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "<ADD YOURS>"
+
+ota:
+  - platform: esphome
+    password: "<ADD YOURS>"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "<ADD YOURS>"
+    password: "<ADD YOURS>"
+
+captive_portal:
+
+# ES8388 needs I²C for control
+i2c:
+  sda: GPIO33
+  scl: GPIO32
+  frequency: 100kHz
+  id: bus_a
+
+# ES8388 codec (DAC+ADC)
+audio_dac:
+  - platform: es8388
+    id: es8388_dac
+    # address: 0x10            # default; leave unless your board differs
+
+select:
+  - platform: es8388
+    es8388_id: es8388_dac
+    dac_output:
+      name: "A1S DAC Output"
+    adc_input_mic:
+      name: "A1S Mic Input"
+
+# I²S bus pins on the ESP32-A1S Audio Kit
+i2s_audio:
+  id: i2s_bus
+  i2s_lrclk_pin: GPIO25       # LRCLK/WCLK
+  i2s_bclk_pin:  GPIO27       # BCLK
+  i2s_mclk_pin:  GPIO0        # MCLK
+
+# The actual hardware speaker (owns GPIO26)
+speaker:
+  - platform: i2s_audio
+    id: announ_spk
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: GPIO26
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: mono
+    audio_dac: es8388_dac
+
+  - platform: mixer
+    id: a1s_mixer_out
+    output_speaker: announ_spk
+    # Two separate inputs: one for VA announcements, one for media
+    source_speakers:
+      - id: va_announce_in
+      - id: media_in
+
+  - platform: resampler
+    id: va_announce_resamp
+    output_speaker: va_announce_in
+
+  - platform: resampler
+    id: media_resamp
+    output_speaker: media_in
+
+# Microphone (ES8388 ADC -> I²S in)
+microphone:
+  - platform: i2s_audio
+    id: mic_in
+    adc_type: external        
+    i2s_audio_id: i2s_bus     # use the same I²S bus you defined above
+    i2s_din_pin: GPIO35       # ES8388 ADCDAT -> ESP32 DIN
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    pdm: false
+
+media_player:
+  - platform: speaker
+    id: a1s_media
+    name: "A1S Media Player"
+    # Main music/audio goes here
+    media_pipeline:
+      speaker: media_resamp        # the resampler feeding the mixer
+      num_channels: 1              # mono matches your current speaker config; set 2 if you go stereo
+      # Home Assistant will proxy/transcode for you; defaults are fine. You can force:
+      # format: FLAC
+      # sample_rate: 48000
+      # num_channels: 1
+
+    # Optional: let HA use a separate “announcement” lane (doorbell chime, alerts)
+    announcement_pipeline:
+      speaker: va_announce_resamp  # shares the same path your VA TTS uses
+      num_channels: 1
+
+    # Optional performance tuning (you can omit initially)
+    buffer_size: 262144 #V4
+    # codec_support_enabled: true
+
+    # Auto-manage the wake-word mic to avoid I²S contention
+    on_state:
+      - if:
+          condition:
+            media_player.is_playing: a1s_media
+          then:
+            - logger.log: "Media playing → suspending wake-word"
+            - if:
+                condition:
+                  switch.is_on: use_wake_word
+                then:
+                  - voice_assistant.stop:
+            - delay: 200ms   # let I²S RX tear down before TX starts
+
+      - if:
+          condition:
+            or:
+              - media_player.is_paused: a1s_media
+              - media_player.is_idle: a1s_media
+          then:
+            - logger.log: "Media not playing → resuming wake-word"
+            - if:
+                condition:
+                  switch.is_on: use_wake_word
+                then:
+                  - delay: 200ms   # give TX time to flush/stop
+                  - voice_assistant.start_continuous:
+
+# Optional: toggle the onboard power amp / mute (many A1S boards use GPIO21)
+switch:
+  - platform: gpio
+    pin: GPIO21
+    id: amp_enable
+    name: "A1S AMP Enable"
+    restore_mode: ALWAYS_ON
+
+# Wake Word Switch
+  - platform: template
+    name: "Use Wake Word"
+    id: use_wake_word
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - logger.log: "Wake word enabled"
+      - voice_assistant.stop
+      - delay: 250ms
+      - voice_assistant.start_continuous
+    on_turn_off:
+      - logger.log: "Wake word disabled"
+      - voice_assistant.stop
+    
+
+# Voice Assistant should speak through the announcement path too
+voice_assistant:
+  id: ha_va #Change as needed
+  microphone: mic_in
+  speaker: va_announce_resamp
+  noise_suppression_level: 2
+  use_wake_word: true
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+
+  on_error:
+    - script.execute: va_led_error
+    - if:
+        condition:
+          switch.is_on: use_wake_word
+        then:
+          - switch.turn_off: use_wake_word
+          - switch.turn_on: use_wake_word 
+
+  on_client_connected:
+    - script.execute: va_led_idle
+    - if:
+        condition:
+          switch.is_on: use_wake_word
+        then:
+          - voice_assistant.start_continuous:
+
+  on_client_disconnected:
+    - if:
+        condition:
+          switch.is_on: use_wake_word
+        then:
+          - voice_assistant.stop:
+
+  on_wake_word_detected:
+    - script.execute: va_led_listen
+  on_listening:
+    - script.execute: va_led_listen
+  on_stt_end:
+    - script.execute: va_led_think
+  on_tts_start:
+    - script.execute: va_led_speak
+  on_tts_end:
+    - script.execute: va_led_idle
+  on_end:
+    - script.execute: va_led_idle
+  
+
+script:
+  - id: va_led_idle
+    mode: restart
+    then:
+      - light.turn_on:
+          id: va_led
+          effect: Idle
+  - id: va_led_listen
+    mode: restart
+    then:
+      - light.turn_on:
+          id: va_led
+          brightness: 100%
+          effect: none
+  - id: va_led_think
+    mode: restart
+    then:
+      - light.turn_on:
+          id: va_led
+          effect: Thinking
+  - id: va_led_speak
+    mode: restart
+    then:
+      - light.turn_on:
+          id: va_led
+          effect: Speaking
+  - id: va_led_error
+    mode: restart
+    then:
+      - light.turn_on:
+          id: va_led
+          effect: "Error Blink"
+      - delay: 2s
+      - script.execute: va_led_idle
+
+# BINARY SENSORS
+
+binary_sensor:
+
+  - platform: status
+    name: API Connection
+    id: api_connection
+
+# --- D4 status LED on GPIO22 ---
+output:
+  - platform: ledc
+    id: d4_pwm
+    pin: GPIO22         # LED D4 (most A1S v2.2)
+    # inverted: true    # <- uncomment if the LED logic is backwards on your board
+
+light:
+  - platform: monochromatic
+    id: va_led
+    name: "A1S Status LED"
+    output: d4_pwm
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    effects:
+      - pulse:
+          name: Idle
+          transition_length: 800ms
+          update_interval: 800ms
+          min_brightness: 15%
+          max_brightness: 35%
+      - pulse:
+          name: Thinking
+          transition_length: 250ms
+          update_interval: 250ms
+          min_brightness: 20%
+          max_brightness: 100%
+      - pulse:
+          name: Speaking
+          transition_length: 500ms
+          update_interval: 500ms
+          min_brightness: 20%
+          max_brightness: 80%
+      - strobe:
+          name: Error Blink
+          colors:
+            - state: true
+              brightness: 100%
+              duration: 200ms
+            - state: false
+              duration: 200ms
