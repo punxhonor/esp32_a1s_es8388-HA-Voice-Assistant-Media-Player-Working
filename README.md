@@ -11,6 +11,7 @@ Would love for someone smarter than me to take a look and see what could improve
 
 The first error I saw happens after a voice command is excecuted and the pipeline finishes and restarts:
 
+```text
 [10:28:59][D][voice_assistant:484]: Desired state set to RESPONSE_FINISHED 
 [10:29:00][D][voice_assistant:375]: Speaker has finished outputting all audio 
 [10:29:00][D][voice_assistant:477]: State changed from RESPONSE_FINISHED to IDLE 
@@ -36,9 +37,11 @@ The first error I saw happens after a voice command is excecuted and the pipelin
 [10:29:01][D][voice_assistant:623]: Event Type: 1 
 [10:29:01][D][voice_assistant:626]: Assist Pipeline running 
 [10:29:01][D][voice_assistant:623]: Event Type: 9
+```
 
 The next error happens when I start the media player, specifically I am using radio station in Music Assistant. This warning doesn't prevent media from playing, seems ignorable, but if anyone has a solution, that would be nice:
 
+```
 [11:28:42][D][main:727]: Media playing → suspending wake-word
 [11:28:42][D][voice_assistant:605]: Signaling stop
 [11:28:42][D][voice_assistant:477]: State changed from STREAMING_MICROPHONE to STOP_MICROPHONE
@@ -60,3 +63,4 @@ The next error happens when I start the media player, specifically I am using ra
 [11:28:48][W][component:408]: Components should block for at most 30 ms
 [11:28:48][D][i2s_audio.speaker:136]: Starting
 [11:28:48][D][i2s_audio.speaker:141]: Started
+```
