@@ -3,7 +3,7 @@ I'm very new to all this, but this is my attempt at having a working Voice Assis
 
 The specific board is this one: https://www.amazon.com/dp/B0B63KZ6C1?ref=ppx_yo2ov_dt_b_fed_asin_title
 
-There are some slight errors, I am hoping someone who knows more about this than I do can help fix that.
+There are some slight errors, I am hoping someone who knows more about this than I do can help fix that. I left out the buttons because setting that up seems like more of a personal preference, I chose to expose mine to Home Assistant, but you may want to code your own specific actions instead.
 
 Apart from the errors in the logs, it works. Wake words work repeatedly, which I was struggling with before and getting the issue where it only works once and then does not work anymore. And media player works, the only catch is using the media player turns off the wake word, so you have to pause the media player to use the wake word again.
 
